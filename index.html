@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduSpecial Cloud - Gestión Docente</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body { font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(12px); }
+        .card-shadow { box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.05); }
+        .animate-in { animation: fadeIn 0.5s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-[#F8FAFC] text-slate-900">
+    <div id="root"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        window.FB_CORE = { initializeApp, getFirestore, collection, addDoc, onSnapshot, query, orderBy, getAuth, signInAnonymously, onAuthStateChanged };
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const App = () => {
+            const [students, setStudents] = useState([]);
+            const [view, setView] = useState('dashboard');
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [loading, setLoading] = useState(true);
+            const [dbStatus, setDbStatus] = useState('checking'); // 'cloud', 'local', 'checking'
+            const [errorNotice, setErrorNotice] = useState(null);
+            const initialized = useRef(false);
+
+            const firebaseConfig = {
+                apiKey: "AIzaSyBCLcf1OE1sPFo7zv7Ki5seIpGtcciRrhY".trim(),
+                authDomain: "eduspecial-424ce.firebaseapp.com",
+                projectId: "eduspecial-424ce",
+                storageBucket: "eduspecial-424ce.firebasestorage.app",
+                messagingSenderId: "866546155670",
+                appId: "1:866546155670:web:e023c6cfebf94341ac42b7"
+            };
+
+            // Lógica de Persistencia Local (Fallback)
+            const saveLocal = (newData) => {
+                const current = JSON.parse(localStorage.getItem('eduspecial_data') || '[]');
+                const updated = [newData, ...current];
+                localStorage.setItem('eduspecial_data', JSON.stringify(updated));
+                setStudents(updated);
+            };
+
+            const loadLocal = () => {
+                const data = JSON.parse(localStorage.getItem('eduspecial_data') || '[]');
+                setStudents(data);
+                setDbStatus('local');
+                setLoading(false);
+            };
+
+            const initFirebase = async () => {
+                if (initialized.current || !window.FB_CORE) return;
+                initialized.current = true;
+
+                try {
+                    const app = window.FB_CORE.initializeApp(firebaseConfig);
+                    const auth = window.FB_CORE.getAuth(app);
+                    const db = window.FB_CORE.getFirestore(app);
+
+                    // Intentar Login Anónimo
+                    try {
+                        await window.FB_CORE.signInAnonymously(auth);
+                        setDbStatus('cloud');
+                        
+                        const q = window.FB_CORE.query(window.FB_CORE.collection(db, "students"));
+                        window.FB_CORE.onSnapshot(q, (snapshot) => {
+                            const data = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+                            setStudents(data);
+                            setLoading(false);
+                        }, (err) => {
+                            console.warn("Firestore restringido, usando LocalStorage.");
+                            loadLocal();
+                        });
+                    } catch (authError) {
+                        console.error("Error de Autenticación (API KEY):", authError.code);
+                        setErrorNotice("La clave de la nube está siendo validada por Google. Usando Modo Local seguro.");
+                        loadLocal();
+                    }
+                } catch (e) {
+                    console.error("Error de inicialización:", e);
+                    loadLocal();
+                }
+            };
+
+            useEffect(() => {
+                const timer = setTimeout(() => { if (loading) loadLocal(); }, 5000);
+                if (window.FB_CORE) initFirebase();
+                else window.addEventListener('firebase-ready', initFirebase);
+                
+                return () => {
+                    window.removeEventListener('firebase-ready', initFirebase);
+                    clearTimeout(timer);
+                };
+            }, []);
+
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [view, isModalOpen, students, loading]);
+
+            const handleAdd = async (e) => {
+                e.preventDefault();
+                const studentData = {
+                    name: e.target.name.value,
+                    grade: e.target.grade.value,
+                    diagnosis: e.target.diag.value,
+                    createdAt: new Date().toISOString()
+                };
+
+                if (dbStatus === 'cloud') {
+                    try {
+                        const db = window.FB_CORE.getFirestore();
+                        await window.FB_CORE.addDoc(window.FB_CORE.collection(db, "students"), studentData);
+                    } catch (e) {
+                        saveLocal({ id: Date.now(), ...studentData });
+                    }
+                } else {
+                    saveLocal({ id: Date.now(), ...studentData });
+                }
+                setIsModalOpen(false);
+            };
+
+            if (loading) return (
+                <div className="h-screen flex items-center justify-center bg-white">
+                    <div className="text-center">
+                        <div className="w-12 h-12 border-[3px] border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Sincronizando Sistema</p>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen">
+                    <nav className="glass sticky top-0 z-50 px-6 py-4 flex justify-between items-center border-b border-slate-100">
+                        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('dashboard')}>
+                            <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg shadow-indigo-200">
+                                <i data-lucide="sparkles" className="w-5 h-5"></i>
+                            </div>
+                            <span className="font-black text-xl tracking-tighter uppercase italic">EduSpecial</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest ${dbStatus === 'cloud' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${dbStatus === 'cloud' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
+                                {dbStatus === 'cloud' ? 'Nube Activa' : 'Modo Local'}
+                            </div>
+                            <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs hover:bg-indigo-600 transition-all shadow-lg">
+                                + Nuevo
+                            </button>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-5xl mx-auto p-6 md:p-12">
+                        {errorNotice && (
+                            <div className="mb-10 p-5 bg-white border border-slate-200 rounded-3xl flex items-center gap-4 animate-in shadow-sm">
+                                <div className="bg-amber-100 p-2 rounded-xl text-amber-600"><i data-lucide="shield-alert" className="w-5 h-5"></i></div>
+                                <p className="text-xs font-bold text-slate-500 leading-relaxed">{errorNotice}</p>
+                            </div>
+                        )}
+
+                        {view === 'dashboard' ? (
+                            <div className="animate-in space-y-12">
+                                <header>
+                                    <h1 className="text-6xl font-black text-slate-900 tracking-tighter italic leading-none mb-4">Panel de<br/>Control</h1>
+                                    <p className="text-slate-400 font-medium text-lg">Bienvenido al gestor pedagógico inteligente.</p>
+                                </header>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div onClick={() => setView('list')} className="bg-white p-10 rounded-[3rem] border border-slate-100 card-shadow cursor-pointer hover:border-indigo-600 transition-all group">
+                                        <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                                            <i data-lucide="users" className="w-7 h-7"></i>
+                                        </div>
+                                        <h3 className="text-3xl font-black mb-2 tracking-tight">Alumnos</h3>
+                                        <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">{students.length} Registrados</p>
+                                    </div>
+                                    <div className="bg-slate-100/50 p-10 rounded-[3rem] border border-dashed border-slate-200 flex flex-col justify-center items-center text-slate-300">
+                                        <i data-lucide="bar-chart-3" className="w-8 h-8 mb-4"></i>
+                                        <p className="text-[10px] font-black uppercase tracking-[0.2em]">Próximamente: Estadísticas</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="animate-in space-y-8">
+                                <div className="flex items-center justify-between">
+                                    <button onClick={() => setView('dashboard')} className="flex items-center gap-2 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-indigo-600">
+                                        <i data-lucide="arrow-left" className="w-4 h-4"></i> Volver
+                                    </button>
+                                    <h2 className="text-3xl font-black italic tracking-tight">Listado General</h2>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {students.map(s => (
+                                        <div key={s.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex justify-between items-center group hover:border-indigo-200 transition-all">
+                                            <div>
+                                                <h4 className="font-black text-xl mb-3 tracking-tight">{s.name}</h4>
+                                                <div className="flex gap-2">
+                                                    <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded-lg uppercase tracking-wider">{s.grade}</span>
+                                                    <span className="text-[9px] font-black bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg uppercase tracking-wider">{s.diagnosis}</span>
+                                                </div>
+                                            </div>
+                                            <button className="w-10 h-10 rounded-full bg-slate-50 text-slate-200 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                                                <i data-lucide="eye" className="w-4 h-4"></i>
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {students.length === 0 && (
+                                        <div className="col-span-full py-24 text-center border-2 border-dashed border-slate-100 rounded-[3rem]">
+                                            <p className="text-slate-300 font-bold italic">No hay datos disponibles.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {isModalOpen && (
+                        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+                            <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl animate-in">
+                                <div className="flex justify-between items-center mb-10">
+                                    <h3 className="text-3xl font-black italic tracking-tight">Nuevo Alumno</h3>
+                                    <button onClick={() => setIsModalOpen(false)} className="bg-slate-50 w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-rose-500 transition-all"><i data-lucide="x" className="w-5 h-5"></i></button>
+                                </div>
+                                <form className="space-y-6" onSubmit={handleAdd}>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Nombre Completo</label>
+                                        <input name="name" required className="w-full p-5 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold transition-all" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Grado</label>
+                                            <input name="grade" required className="w-full p-5 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold transition-all" />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Diagnóstico</label>
+                                            <input name="diag" required className="w-full p-5 bg-slate-50 rounded-2xl outline-none focus:ring-4 ring-indigo-50 font-bold transition-all" />
+                                        </div>
+                                    </div>
+                                    <button type="submit" className="w-full bg-indigo-600 text-white py-6 rounded-[2rem] font-black text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all uppercase tracking-widest mt-4">
+                                        Guardar Registro
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
